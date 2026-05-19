@@ -1,0 +1,623 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>台北市 ICOPE 及轉介資源查詢系統</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@300;400;500;700;900&display=swap');
+        
+        :root {
+            --primary: #0284c7; /* 台北市改為藍色系 */
+            --primary-light: #f0f9ff;
+            --secondary: #0ea5e9;
+        }
+
+        body { 
+            font-family: 'Noto Sans TC', sans-serif; 
+            background-color: #f8fafc;
+            color: #334155;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        .card-shadow { box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.05), 0 8px 10px -6px rgba(0, 0, 0, 0.01); }
+        .glass { background: rgba(255, 255, 255, 0.95); backdrop-filter: blur(12px); }
+        
+        #map, #referralMap { height: 65vh; width: 100%; border-radius: 1.5rem; z-index: 10; border: 4px solid white; box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.05); }
+        
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        
+        .stat-bubble, .tab-btn {
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            cursor: pointer;
+            user-select: none;
+        }
+        .stat-bubble:active, .tab-btn:active { transform: scale(0.95); }
+        
+        .tab-btn.active {
+            background-color: var(--primary);
+            color: white;
+            box-shadow: 0 4px 12px -2px rgba(2, 132, 199, 0.3);
+        }
+        .tab-btn.inactive {
+            background-color: white;
+            color: #64748b;
+            border: 1px solid #e2e8f0;
+        }
+
+        @media print {
+            .no-print { display: none !important; }
+            body { background: white; }
+            #unitGrid { display: block !important; }
+            .unit-card { 
+                border-bottom: 1px solid #e2e8f0 !important; 
+                padding: 12px 0 !important;
+                display: flex !important;
+                justify-content: space-between;
+                box-shadow: none !important;
+                break-inside: avoid;
+            }
+        }
+    </style>
+</head>
+<body class="min-h-screen pb-12">
+
+    <header class="bg-white border-b border-gray-200 sticky top-0 z-[1001] no-print shadow-sm">
+        <div class="container mx-auto px-4 py-3 flex flex-col md:flex-row justify-between items-center gap-4">
+            <div class="flex items-center gap-3 w-full md:w-auto">
+                <div class="bg-sky-600 p-2.5 rounded-2xl text-white shadow-lg shadow-sky-600/20">
+                    <i class="fas fa-city text-xl"></i>
+                </div>
+                <div>
+                    <h1 class="text-base md:text-lg font-black text-slate-800 leading-tight tracking-wide">台北市長者整合性評估(ICOPE)資源網</h1>
+                    <p class="text-[10px] text-slate-400 font-bold uppercase tracking-widest">Taipei City ICOPE Resources</p>
+                </div>
+            </div>
+            
+            <!-- 頁籤切換 -->
+            <div class="flex bg-slate-100 p-1 rounded-2xl w-full md:w-auto">
+                <button onclick="switchTab('icope')" id="tab-icope" class="tab-btn active flex-1 md:w-40 py-2 px-4 rounded-xl text-xs md:text-sm font-bold flex items-center justify-center gap-2">
+                    <i class="fas fa-stethoscope"></i> 評估服務單位
+                </button>
+                <button onclick="switchTab('referral')" id="tab-referral" class="tab-btn inactive flex-1 md:w-40 py-2 px-4 rounded-xl text-xs md:text-sm font-bold flex items-center justify-center gap-2">
+                    <i class="fas fa-hands-holding-circle"></i> 六力+2 轉介資源
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <!-- ICOPE 評估單位區塊 -->
+    <div id="section-icope" class="block animate-fade-in">
+        <nav class="glass border-b border-gray-200 sticky top-[72px] md:top-[64px] z-[1000] no-print">
+            <div class="container mx-auto px-4 py-3">
+                <div class="flex flex-col md:flex-row gap-3">
+                    <div class="relative flex-1">
+                        <i class="fas fa-search absolute left-4 top-3.5 text-slate-400"></i>
+                        <input type="text" id="searchInput" placeholder="搜尋單位名稱、區域或代碼..." 
+                               class="w-full pl-11 pr-4 py-3 bg-white border border-slate-200 rounded-2xl focus:ring-4 focus:ring-sky-500/10 focus:border-sky-600 outline-none transition-all text-sm font-medium">
+                    </div>
+                    <div class="flex gap-2">
+                        <select id="districtFilter" class="flex-1 md:w-44 px-4 py-3 bg-white border border-slate-200 rounded-2xl outline-none text-sm font-bold text-slate-600 focus:border-sky-600 focus:ring-4 focus:ring-sky-500/10">
+                            <option value="">所有行政區</option>
+                        </select>
+                        <select id="typeFilter" class="flex-1 md:w-44 px-4 py-3 bg-white border border-slate-200 rounded-2xl outline-none text-sm font-bold text-slate-600 focus:border-sky-600 focus:ring-4 focus:ring-sky-500/10">
+                            <option value="">機構類別</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+        </nav>
+
+        <div class="container mx-auto px-4 mt-6 no-print overflow-x-auto no-scrollbar">
+            <div id="statsBar" class="flex gap-3 whitespace-nowrap pb-2">
+                <!-- 動態生成分類統計 -->
+            </div>
+        </div>
+
+        <main class="container mx-auto px-4 mt-4">
+            <div class="flex justify-between items-center mb-6 no-print">
+                <div class="bg-slate-200/80 p-1.5 rounded-2xl flex shadow-inner">
+                    <button id="listViewBtn" class="w-28 py-2 rounded-xl text-xs font-bold transition-all bg-white shadow-sm text-sky-800">
+                        <i class="fas fa-list-ul mr-2"></i>清單
+                    </button>
+                    <button id="mapViewBtn" class="w-28 py-2 rounded-xl text-xs font-bold transition-all text-slate-500 hover:text-sky-700">
+                        <i class="fas fa-map-marked-alt mr-2"></i>地圖
+                    </button>
+                </div>
+                <button onclick="window.print()" class="bg-slate-800 text-white px-4 py-2.5 rounded-xl text-xs font-bold hover:bg-slate-700 transition-all flex items-center gap-2 shadow-lg shadow-slate-800/20">
+                    <i class="fas fa-download"></i> 匯出清單
+                </button>
+            </div>
+
+            <div id="mapContainer" class="hidden mb-10 no-print">
+                <div id="map"></div>
+            </div>
+
+            <div id="listViewContainer">
+                <div class="flex items-center justify-between mb-6">
+                    <div class="h-px bg-slate-200 flex-1"></div>
+                    <span class="mx-4 text-[11px] font-black text-slate-400 uppercase tracking-widest">
+                        找到 <span id="resultCount" class="text-sky-600 text-sm">0</span> 處服務單位 (共 <span id="totalCount"></span> 處)
+                    </span>
+                    <div class="h-px bg-slate-200 flex-1"></div>
+                </div>
+                <div id="unitGrid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                    <!-- 單位卡片 -->
+                </div>
+            </div>
+
+            <div id="emptyState" class="hidden text-center py-24">
+                <div class="text-slate-200 mb-4"><i class="fas fa-search text-6xl"></i></div>
+                <h3 class="text-slate-400 font-bold">查無符合條件的單位</h3>
+            </div>
+        </main>
+    </div>
+
+    <!-- 轉介資源區塊 (預設隱藏) -->
+    <div id="section-referral" class="hidden animate-fade-in pb-10">
+        <div class="bg-sky-50 border-b border-sky-100">
+            <div class="container mx-auto px-4 py-6">
+                <h2 class="text-xl font-black text-slate-800 mb-2">ICOPE 異常後續轉介資源地圖</h2>
+                <p class="text-sm text-slate-500 font-medium">包含長者六力（認知、行動、營養、視力、聽力、憂鬱）以及 藥物整合、社會福利 等後續資源。</p>
+            </div>
+        </div>
+
+        <nav class="glass border-b border-gray-200 sticky top-[72px] md:top-[64px] z-[1000] no-print">
+            <div class="container mx-auto px-4 py-3">
+                <div class="flex flex-col md:flex-row gap-3">
+                    <select id="referralTypeFilter" class="flex-1 px-4 py-3 bg-white border border-slate-200 rounded-2xl outline-none text-sm font-bold text-slate-600 focus:border-indigo-600 focus:ring-4 focus:ring-indigo-500/10">
+                        <option value="">所有轉介項目 (六力+2)</option>
+                        <option value="認知異常">🧠 認知異常</option>
+                        <option value="行動異常">🚶 行動異常</option>
+                        <option value="營養異常">🥗 營養異常</option>
+                        <option value="視力異常">👁️ 視力異常</option>
+                        <option value="聽力異常">👂 聽力異常</option>
+                        <option value="憂鬱異常">😔 憂鬱異常</option>
+                        <option value="藥物整合">💊 藥物整合 (多重用藥)</option>
+                        <option value="社會福利">🤝 社會福利 (長照/社福資源)</option>
+                    </select>
+                    <select id="referralDistrictFilter" class="md:w-48 px-4 py-3 bg-white border border-slate-200 rounded-2xl outline-none text-sm font-bold text-slate-600 focus:border-indigo-600">
+                        <option value="">所有行政區</option>
+                    </select>
+                </div>
+            </div>
+        </nav>
+
+        <main class="container mx-auto px-4 mt-6">
+            <div class="flex flex-col lg:flex-row gap-6">
+                <!-- 地圖區塊佔 2/3 -->
+                <div class="w-full lg:w-2/3">
+                    <div class="bg-white p-2 rounded-3xl card-shadow">
+                        <div id="referralMap"></div>
+                    </div>
+                </div>
+                
+                <!-- 資源列表區塊佔 1/3 -->
+                <div class="w-full lg:w-1/3">
+                    <div class="bg-white rounded-3xl p-5 card-shadow border border-slate-100 h-[65vh] flex flex-col">
+                        <h3 class="font-black text-slate-800 text-lg mb-4 flex items-center gap-2">
+                            <i class="fas fa-list-check text-indigo-600"></i> 建議轉介單位列表
+                            <span id="refResultCount" class="ml-auto bg-indigo-100 text-indigo-700 text-xs px-2.5 py-1 rounded-lg">0</span>
+                        </h3>
+                        <div id="referralList" class="overflow-y-auto flex-1 pr-2 space-y-3 custom-scrollbar">
+                            <!-- 轉介清單由 JS 渲染 -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script>
+        // --- 台北市 ICOPE 評估單位假資料 (改為台北市的醫院與行政區) ---
+        const icopeData = [
+            ["台大醫院", "醫學中心", "0401180014", "中正區", "02-23123456"],
+            ["台北榮民總醫院", "醫學中心", "0501160016", "北投區", "02-28712121"],
+            ["馬偕紀念醫院", "醫學中心", "1101100014", "中山區", "02-25433535"],
+            ["新光吳火獅紀念醫院", "醫學中心", "1101150011", "士林區", "02-28332211"],
+            ["台北市立聯合醫院中興院區", "區域醫院", "0101090517", "大同區", "02-25523234"],
+            ["台北市立聯合醫院仁愛院區", "區域醫院", "0101100019", "大安區", "02-27093600"],
+            ["台北市立聯合醫院和平婦幼院區", "區域醫院", "0101180011", "中正區", "02-23889595"],
+            ["國泰綜合醫院", "醫學中心", "1101100023", "大安區", "02-27082121"],
+            ["三軍總醫院松山分院", "區域醫院", "0601010014", "松山區", "02-27642151"],
+            ["振興醫院", "區域醫院", "1101160010", "北投區", "02-28264400"],
+            ["大安區衛生所(健康服務中心)", "衛生所", "2301030012", "大安區", "02-27335831"],
+            ["中山區衛生所(健康服務中心)", "衛生所", "2301100012", "中山區", "02-25014616"],
+            ["信義區衛生所(健康服務中心)", "衛生所", "2301170019", "信義區", "02-27234598"],
+            ["松山區衛生所(健康服務中心)", "衛生所", "2301010016", "松山區", "02-27671757"],
+            ["萬華區衛生所(健康服務中心)", "衛生所", "2301190017", "萬華區", "02-23033092"],
+            ["文山區衛生所(健康服務中心)", "衛生所", "2301200014", "文山區", "02-22343501"],
+            ["南港區衛生所(健康服務中心)", "衛生所", "2301110010", "南港區", "02-27825220"],
+            ["內湖區衛生所(健康服務中心)", "衛生所", "2301150012", "內湖區", "02-27911162"],
+            ["陳家醫科診所", "診所", "3501102548", "中山區", "02-25811234"],
+            ["林仁安診所", "診所", "3501031961", "大安區", "02-27015566"],
+            ["健康好人瑞診所", "診所", "3501156540", "內湖區", "02-27909876"],
+            ["信義家醫診所", "診所", "3501177305", "信義區", "02-27201122"],
+            ["大同樂齡診所", "診所", "3501095721", "大同區", "02-25503344"],
+            ["萬華安心診所", "診所", "3501196246", "萬華區", "02-23027788"],
+            ["北投關懷診所", "診所", "3501167467", "北投區", "02-28912233"],
+            ["士林長春診所", "診所", "3501157501", "士林區", "02-28815566"],
+            ["南港康健診所", "診所", "3501116817", "南港區", "02-27834455"],
+            ["文山福氣診所", "診所", "3501202702", "文山區", "02-29318899"],
+            ["安康居家護理所", "居家護理所", "7401101059", "大安區", "02-27551234"],
+            ["慈恩居家護理所", "居家護理所", "7401161574", "北投區", "02-28219876"],
+            ["大安聯安藥局", "藥局", "5901035105", "大安區", "02-27083322"],
+            ["信義健康藥局", "藥局", "5901171370", "信義區", "02-27221100"],
+            ["中山平安藥局", "藥局", "5901103145", "中山區", "02-25678899"],
+            ["內湖康寧藥局", "藥局", "5901153010", "內湖區", "02-27923344"],
+            ["松山活力物理治療所", "物理治療所", "QY01010054", "松山區", "02-27654321"],
+            ["文山動能物理治療所", "物理治療所", "QY01200088", "文山區", "02-29332211"]
+        ];
+
+        // 台北市行政區中心座標
+        const taipeiDists = {
+            "中正區": [25.032, 121.519], "大同區": [25.063, 121.513], "中山區": [25.068, 121.533],
+            "松山區": [25.058, 121.558], "大安區": [25.026, 121.543], "萬華區": [25.029, 121.498],
+            "信義區": [25.032, 121.567], "士林區": [25.092, 121.524], "北投區": [25.132, 121.498],
+            "內湖區": [25.083, 121.589], "南港區": [25.055, 121.617], "文山區": [24.988, 121.575]
+        };
+
+        // --- 六力+2 轉介資源假資料 ---
+        const referralResources = [
+            { name: "台北市立聯合醫院松德院區", type: "憂鬱異常", subType: "精神科", district: "信義區", phone: "02-27263141", address: "台北市信義區松山路421號", lat: 25.036, lng: 121.579 },
+            { name: "失智症共照中心(台大醫院)", type: "認知異常", subType: "神經內科/失智共照", district: "中正區", phone: "02-23123456轉65432", address: "台北市中正區中山南路7號", lat: 25.040, lng: 121.518 },
+            { name: "榮總高齡醫學中心", type: "藥物整合", subType: "高齡醫學科", district: "北投區", phone: "02-28757758", address: "台北市北投區石牌路二段201號", lat: 25.118, lng: 121.520 },
+            { name: "馬偕醫院高齡整合門診", type: "藥物整合", subType: "高齡醫學科", district: "中山區", phone: "02-25433535", address: "台北市中山區中山北路二段92號", lat: 25.058, lng: 121.522 },
+            { name: "復健部骨科(新光醫院)", type: "行動異常", subType: "復健科/骨科", district: "士林區", phone: "02-28332211", address: "台北市士林區文昌路95號", lat: 25.094, lng: 121.519 },
+            { name: "宏明物理治療所", type: "行動異常", subType: "物理治療所", district: "大安區", phone: "02-27001234", address: "台北市大安區復興南路二段X號", lat: 25.028, lng: 121.543 },
+            { name: "社區營養推廣中心(萬華區)", type: "營養異常", subType: "營養諮詢", district: "萬華區", phone: "02-23033092", address: "台北市萬華區東園街152號", lat: 25.021, lng: 121.496 },
+            { name: "市立聯合醫院眼科部", type: "視力異常", subType: "眼科", district: "中正區", phone: "02-23889595", address: "台北市中正區中華路二段33號", lat: 25.034, lng: 121.506 },
+            { name: "光明眼科診所", type: "視力異常", subType: "眼科診所", district: "大同區", phone: "02-25556677", address: "台北市大同區重慶北路X號", lat: 25.060, lng: 121.513 },
+            { name: "科林助聽器(信義門市)", type: "聽力異常", subType: "聽力評估/助聽器", district: "信義區", phone: "02-27209988", address: "台北市信義區信義路五段X號", lat: 25.032, lng: 121.564 },
+            { name: "振興醫院耳鼻喉部", type: "聽力異常", subType: "耳鼻喉科", district: "北投區", phone: "02-28264400", address: "台北市北投區振興街45號", lat: 25.116, lng: 121.522 },
+            { name: "台北市長期照顧管理中心", type: "社會福利", subType: "照管中心", district: "中山區", phone: "1966", address: "台北市中山區錦州街233號", lat: 25.060, lng: 121.531 },
+            { name: "大安區社會福利服務中心", type: "社會福利", subType: "社福中心", district: "大安區", phone: "02-27083321", address: "台北市大安區延吉街X號", lat: 25.035, lng: 121.554 },
+            { name: "內湖老人服務中心", type: "社會福利", subType: "老人服務中心", district: "內湖區", phone: "02-27918877", address: "台北市內湖區成功路X號", lat: 25.080, lng: 121.590 },
+            { name: "文山區失智社區服務據點", type: "認知異常", subType: "失智據點", district: "文山區", phone: "02-29334455", address: "台北市文山區木柵路X號", lat: 24.985, lng: 121.565 }
+        ];
+
+        const units = icopeData.map(r => ({ name: r[0], type: r[1], code: r[2], district: r[3], phone: r[4] }));
+        
+        let mapIcope, markersIcope = [];
+        let mapReferral, markersReferral = [];
+        let currentTab = 'icope'; // 'icope' 或 'referral'
+
+        // 切換頁籤邏輯
+        function switchTab(tabId) {
+            currentTab = tabId;
+            
+            // 更新按鈕樣式
+            document.getElementById('tab-icope').className = tabId === 'icope' ? 
+                'tab-btn active flex-1 md:w-40 py-2 px-4 rounded-xl text-xs md:text-sm font-bold flex items-center justify-center gap-2' : 
+                'tab-btn inactive flex-1 md:w-40 py-2 px-4 rounded-xl text-xs md:text-sm font-bold flex items-center justify-center gap-2 hover:bg-slate-50';
+            
+            document.getElementById('tab-referral').className = tabId === 'referral' ? 
+                'tab-btn active flex-1 md:w-40 py-2 px-4 rounded-xl text-xs md:text-sm font-bold flex items-center justify-center gap-2' : 
+                'tab-btn inactive flex-1 md:w-40 py-2 px-4 rounded-xl text-xs md:text-sm font-bold flex items-center justify-center gap-2 hover:bg-slate-50';
+
+            // 顯示/隱藏內容區塊
+            if(tabId === 'icope') {
+                document.getElementById('section-icope').classList.remove('hidden');
+                document.getElementById('section-referral').classList.add('hidden');
+            } else {
+                document.getElementById('section-icope').classList.add('hidden');
+                document.getElementById('section-referral').classList.remove('hidden');
+                initReferralMap(); // 確保地圖已初始化
+                renderReferral(); // 渲染清單
+            }
+        }
+
+        // --- 共用小工具 ---
+        function openNav(n, addressOrCode) { window.open(`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(n + ' ' + addressOrCode)}`); }
+        function shareLine(txt) { window.open(`https://line.me/R/msg/text/?${encodeURIComponent(txt)}`); }
+
+        // --- ICOPE 頁面邏輯 ---
+        function initIcopeMap() {
+            if (mapIcope) return;
+            // 台北市中心座標
+            mapIcope = L.map('map').setView([25.05, 121.53], 12);
+            L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/light_all/{z}/{x}/{y}.png').addTo(mapIcope);
+        }
+
+        function updateIcopeMarkers(data) {
+            markersIcope.forEach(m => mapIcope.removeLayer(m));
+            markersIcope = [];
+            data.forEach(u => {
+                const base = taipeiDists[u.district] || [25.05, 121.53];
+                // 產生微小的隨機偏移，避免同區地標完全重疊
+                const lat = base[0] + (Math.random() - 0.5) * 0.02;
+                const lng = base[1] + (Math.random() - 0.5) * 0.02;
+                
+                // 根據類型設定 icon 顏色 (簡化做法)
+                const markerHtml = `<div style="background-color:var(--primary);width:14px;height:14px;border-radius:50%;border:2px solid white;box-shadow:0 0 4px rgba(0,0,0,0.3);"></div>`;
+                const customIcon = L.divIcon({ html: markerHtml, className: 'custom-div-icon', iconSize: [14, 14], iconAnchor: [7, 7] });
+
+                const marker = L.marker([lat, lng], {icon: customIcon}).addTo(mapIcope).bindPopup(`
+                    <div class='font-bold text-sky-800 text-sm'>${u.name}</div>
+                    <div class='text-[10px] bg-slate-100 text-slate-600 inline-block px-1.5 py-0.5 rounded mt-1'>${u.type}</div>
+                    <div class='text-xs text-slate-600 my-2 font-mono'>${u.phone}</div>
+                    <button onclick="openNav('${u.name}', '${u.code}')" class='w-full bg-sky-600 text-white text-[10px] py-1.5 rounded-lg font-bold hover:bg-sky-700'>Google 導航</button>
+                `);
+                markersIcope.push(marker);
+            });
+        }
+
+        function getIcopeTagStyle(t) {
+            const styles = {
+                '醫學中心': 'bg-rose-50 text-rose-700 border-rose-200',
+                '區域醫院': 'bg-orange-50 text-orange-700 border-orange-200',
+                '衛生所': 'bg-emerald-50 text-emerald-700 border-emerald-200',
+                '藥局': 'bg-indigo-50 text-indigo-700 border-indigo-200',
+                '診所': 'bg-sky-50 text-sky-700 border-sky-200',
+                '居家護理所': 'bg-purple-50 text-purple-700 border-purple-200',
+                '物理治療所': 'bg-amber-50 text-amber-700 border-amber-200'
+            };
+            return styles[t] || 'bg-slate-50 text-slate-600 border-slate-100';
+        }
+
+        function renderIcope() {
+            const s = document.getElementById('searchInput').value.toLowerCase();
+            const d = document.getElementById('districtFilter').value;
+            const t = document.getElementById('typeFilter').value;
+
+            const filtered = units.filter(u => 
+                (u.name.toLowerCase().includes(s) || u.code.includes(s) || u.district.includes(s)) &&
+                (!d || u.district === d) && (!t || u.type === t)
+            );
+
+            document.getElementById('resultCount').textContent = filtered.length;
+            const grid = document.getElementById('unitGrid');
+            grid.innerHTML = '';
+            
+            if (filtered.length === 0) {
+                document.getElementById('emptyState').classList.remove('hidden');
+            } else {
+                document.getElementById('emptyState').classList.add('hidden');
+                filtered.forEach(u => {
+                    const cleanPhone = u.phone.replace(/[^\d]/g, '');
+                    const txt = `【台北市 ICOPE 服務機構】\n單位：${u.name}\n區域：${u.district}\n電話：${u.phone}\n導航：https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(u.name + ' ' + u.code)}`;
+                    
+                    const div = document.createElement('div');
+                    div.className = 'unit-card bg-white rounded-3xl p-6 border border-slate-100 card-shadow flex flex-col justify-between transition-all no-print animate-fade-in hover:border-sky-200';
+                    div.innerHTML = `
+                        <div>
+                            <div class="flex justify-between items-start mb-4">
+                                <span class="text-[10px] py-1 px-2.5 rounded-lg font-bold border ${getIcopeTagStyle(u.type)}">${u.type}</span>
+                                <span class="text-[10px] text-slate-300 font-mono font-bold tracking-tighter">代碼:${u.code}</span>
+                            </div>
+                            <h3 class="font-bold text-slate-800 text-lg mb-2 leading-snug">${u.name}</h3>
+                            <div class="text-xs text-slate-500 font-medium flex items-center mb-6">
+                                <i class="fas fa-location-dot text-sky-500 mr-2"></i> 台北市 ${u.district}
+                            </div>
+                        </div>
+                        <div class="pt-4 border-t border-slate-50">
+                            <div class="flex justify-between items-center mb-5">
+                                <div class="text-slate-700 font-mono font-bold text-sm tracking-tight">${u.phone}</div>
+                                <a href="tel:${cleanPhone}" class="bg-sky-100 text-sky-700 w-9 h-9 rounded-full flex items-center justify-center hover:bg-sky-600 hover:text-white transition-colors">
+                                    <i class="fas fa-phone-alt text-xs"></i>
+                                </a>
+                            </div>
+                            <div class="grid grid-cols-2 gap-3">
+                                <button onclick="openNav('${u.name}', '${u.code}')" class="bg-slate-100 hover:bg-slate-200 text-slate-700 py-2.5 rounded-xl text-xs font-bold transition-all">
+                                    <i class="fas fa-compass mr-1 text-sky-600"></i> 導航
+                                </button>
+                                <button onclick="shareLine('${txt}')" class="bg-[#06C755]/10 hover:bg-[#06C755] hover:text-white text-[#06C755] py-2.5 rounded-xl text-xs font-bold transition-all">
+                                    <i class="fab fa-line mr-1"></i> 分享
+                                </button>
+                            </div>
+                        </div>
+                    `;
+                    grid.appendChild(div);
+                });
+            }
+            if (mapIcope) updateIcopeMarkers(filtered);
+            updateIcopeStats();
+        }
+
+        function updateIcopeStats() {
+            const typesOrder = ['醫學中心', '區域醫院', '診所', '衛生所', '藥局', '居家護理所', '物理治療所'];
+            const counts = units.reduce((a, c) => { a[c.type] = (a[c.type] || 0) + 1; return a; }, {});
+            const bar = document.getElementById('statsBar');
+            const currentType = document.getElementById('typeFilter').value;
+            
+            bar.innerHTML = typesOrder.filter(t => counts[t]).map(type => {
+                const isActive = currentType === type;
+                const count = counts[type];
+                return `
+                <div onclick="toggleIcopeType('${type}')" class="stat-bubble bg-white border ${isActive ? 'border-sky-500 bg-sky-50 shadow-md' : 'border-slate-200 hover:bg-slate-50'} px-4 py-2 rounded-2xl flex items-center gap-2">
+                    <span class="w-2 h-2 rounded-full ${isActive ? 'bg-sky-600 animate-pulse' : 'bg-slate-300'}"></span>
+                    <span class="text-xs font-bold ${isActive ? 'text-sky-800' : 'text-slate-600'}">${type}</span>
+                    <span class="${isActive ? 'bg-sky-200 text-sky-800' : 'bg-slate-100 text-slate-500'} text-[10px] px-2 py-0.5 rounded-lg font-mono font-bold">${count}</span>
+                </div>
+            `}).join('');
+        }
+
+        function toggleIcopeType(type) {
+            const filter = document.getElementById('typeFilter');
+            filter.value = filter.value === type ? "" : type;
+            renderIcope();
+        }
+
+        // --- 轉介資源 (六力+2) 邏輯 ---
+        function initReferralMap() {
+            if (mapReferral) return;
+            mapReferral = L.map('referralMap').setView([25.05, 121.53], 12);
+            L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png', {
+                attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+            }).addTo(mapReferral);
+        }
+
+        function getReferralIconInfo(type) {
+            const config = {
+                '認知異常': { color: '#ec4899', icon: 'fa-brain' }, // pink
+                '行動異常': { color: '#f59e0b', icon: 'fa-person-walking' }, // amber
+                '營養異常': { color: '#84cc16', icon: 'fa-apple-whole' }, // lime
+                '視力異常': { color: '#3b82f6', icon: 'fa-eye' }, // blue
+                '聽力異常': { color: '#8b5cf6', icon: 'fa-ear-listen' }, // violet
+                '憂鬱異常': { color: '#64748b', icon: 'fa-face-frown' }, // slate
+                '藥物整合': { color: '#ef4444', icon: 'fa-capsules' }, // red
+                '社會福利': { color: '#14b8a6', icon: 'fa-hand-holding-heart' } // teal
+            };
+            return config[type] || { color: '#94a3b8', icon: 'fa-hospital' };
+        }
+
+        function updateReferralMarkers(data) {
+            markersReferral.forEach(m => mapReferral.removeLayer(m));
+            markersReferral = [];
+            data.forEach((r, index) => {
+                const info = getReferralIconInfo(r.type);
+                
+                // 自定義帶有 FontAwesome icon 的 Marker
+                const markerHtml = `
+                    <div style="background-color:${info.color};width:28px;height:28px;border-radius:50%;border:3px solid white;box-shadow:0 2px 5px rgba(0,0,0,0.3);display:flex;align-items:center;justify-content:center;color:white;font-size:12px;">
+                        <i class="fas ${info.icon}"></i>
+                    </div>
+                    <div style="position:absolute;bottom:-6px;left:50%;transform:translateX(-50%);width:0;height:0;border-left:5px solid transparent;border-right:5px solid transparent;border-top:6px solid ${info.color};"></div>
+                `;
+                const customIcon = L.divIcon({ html: markerHtml, className: 'referral-marker', iconSize: [28, 34], iconAnchor: [14, 34], popupAnchor: [0, -30] });
+
+                const marker = L.marker([r.lat, r.lng], {icon: customIcon}).addTo(mapReferral).bindPopup(`
+                    <div class='font-black text-slate-800 text-sm mb-1'>${r.name}</div>
+                    <div style="color:${info.color}" class='text-[11px] font-bold mb-2 flex items-center gap-1'><i class="fas ${info.icon}"></i> ${r.type} - ${r.subType}</div>
+                    <div class='text-xs text-slate-600 mb-1'><i class="fas fa-location-dot w-4"></i> ${r.address}</div>
+                    <div class='text-xs text-slate-600 mb-3'><i class="fas fa-phone w-4"></i> ${r.phone}</div>
+                    <button onclick="openNav('${r.name}', '${r.address}')" style="background-color:${info.color}" class='w-full text-white text-xs py-1.5 rounded font-bold'>開始導航</button>
+                `);
+                
+                // 點擊列表可連動地圖 popup (儲存 marker 參照)
+                r._marker = marker;
+                markersReferral.push(marker);
+            });
+        }
+
+        function renderReferral() {
+            const typeFilter = document.getElementById('referralTypeFilter').value;
+            const distFilter = document.getElementById('referralDistrictFilter').value;
+
+            const filtered = referralResources.filter(r => 
+                (!typeFilter || r.type === typeFilter) &&
+                (!distFilter || r.district === distFilter)
+            );
+
+            document.getElementById('refResultCount').textContent = filtered.length;
+            const listContainer = document.getElementById('referralList');
+            listContainer.innerHTML = '';
+
+            if (filtered.length === 0) {
+                listContainer.innerHTML = `<div class="text-center py-10 text-slate-400"><i class="fas fa-box-open text-3xl mb-2"></i><p class="text-sm">此分類或區域暫無資料</p></div>`;
+            } else {
+                filtered.forEach((r, index) => {
+                    const info = getReferralIconInfo(r.type);
+                    const cleanPhone = r.phone.replace(/[^\d]/g, '');
+                    const txt = `【ICOPE 後續轉介資源】\n項目：${r.type}\n單位：${r.name}\n電話：${r.phone}\n地址：${r.address}\n導航：https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(r.name + ' ' + r.address)}`;
+
+                    const item = document.createElement('div');
+                    item.className = 'border border-slate-100 rounded-2xl p-3 hover:bg-slate-50 transition-colors cursor-pointer relative overflow-hidden group';
+                    item.onclick = (e) => {
+                        // 如果點擊的不是按鈕，則在地圖上開啟 Popup
+                        if(!e.target.closest('button') && !e.target.closest('a')) {
+                            if(mapReferral && r._marker) {
+                                mapReferral.setView([r.lat, r.lng], 15);
+                                r._marker.openPopup();
+                            }
+                        }
+                    };
+
+                    item.innerHTML = `
+                        <div class="absolute left-0 top-0 bottom-0 w-1.5" style="background-color:${info.color}"></div>
+                        <div class="pl-3">
+                            <div class="flex justify-between items-start mb-1">
+                                <span class="text-[10px] font-bold px-2 py-0.5 rounded-md text-white shadow-sm" style="background-color:${info.color}"><i class="fas ${info.icon} mr-1"></i>${r.type}</span>
+                                <span class="text-[10px] text-slate-400 font-medium">${r.district}</span>
+                            </div>
+                            <h4 class="font-bold text-slate-800 text-sm mb-1">${r.name}</h4>
+                            <div class="text-[11px] text-slate-500 mb-2">${r.subType}</div>
+                            
+                            <div class="flex gap-2 mt-3">
+                                <a href="tel:${cleanPhone}" class="flex-1 text-center py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-bold text-slate-600 hover:bg-slate-100"><i class="fas fa-phone mr-1"></i> 致電</a>
+                                <button onclick="openNav('${r.name}','${r.address}')" class="flex-1 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-bold text-slate-600 hover:bg-slate-100"><i class="fas fa-location-arrow mr-1"></i> 導航</button>
+                                <button onclick="shareLine('${txt}')" class="w-8 flex items-center justify-center bg-white border border-slate-200 rounded-lg text-xs font-bold text-slate-400 hover:text-[#06C755]"><i class="fab fa-line text-sm"></i></button>
+                            </div>
+                        </div>
+                    `;
+                    listContainer.appendChild(item);
+                });
+            }
+
+            if (mapReferral) {
+                updateReferralMarkers(filtered);
+                // 調整地圖範圍以包含所有標記
+                if(markersReferral.length > 0) {
+                    const group = new L.featureGroup(markersReferral);
+                    mapReferral.fitBounds(group.getBounds(), {padding: [30, 30], maxZoom: 15});
+                } else {
+                    mapReferral.setView([25.05, 121.53], 12);
+                }
+            }
+        }
+
+        // --- 初始化設定 ---
+        const d_sel_icope = document.getElementById('districtFilter');
+        const t_sel_icope = document.getElementById('typeFilter');
+        const d_sel_ref = document.getElementById('referralDistrictFilter');
+        
+        // 填入行政區選項
+        const dists = Object.keys(taipeiDists).sort();
+        dists.forEach(d => {
+            d_sel_icope.add(new Option(d, d));
+            d_sel_ref.add(new Option(d, d));
+        });
+
+        // 填入 ICOPE 機構類型選項
+        [...new Set(units.map(u => u.type))].sort().forEach(t => t_sel_icope.add(new Option(t, t)));
+        
+        // 總數顯示
+        document.getElementById('totalCount').textContent = units.length;
+
+        // ICOPE 清單/地圖切換事件
+        document.getElementById('listViewBtn').onclick = function() {
+            this.className = "w-28 py-2 rounded-xl text-xs font-bold transition-all bg-white shadow-sm text-sky-800";
+            document.getElementById('mapViewBtn').className = "w-28 py-2 rounded-xl text-xs font-bold transition-all text-slate-500 hover:text-sky-700";
+            document.getElementById('listViewContainer').classList.remove('hidden');
+            document.getElementById('mapContainer').classList.add('hidden');
+        };
+        
+        document.getElementById('mapViewBtn').onclick = function() {
+            this.className = "w-28 py-2 rounded-xl text-xs font-bold transition-all bg-white shadow-sm text-sky-700";
+            document.getElementById('listViewBtn').className = "w-28 py-2 rounded-xl text-xs font-bold transition-all text-slate-500 hover:text-sky-700";
+            document.getElementById('listViewContainer').classList.add('hidden');
+            document.getElementById('mapContainer').classList.remove('hidden');
+            initIcopeMap();
+            setTimeout(() => mapIcope.invalidateSize(), 150);
+            renderIcope();
+        };
+
+        // 綁定事件監聽
+        document.getElementById('searchInput').addEventListener('input', renderIcope);
+        d_sel_icope.addEventListener('change', renderIcope);
+        t_sel_icope.addEventListener('change', renderIcope);
+        
+        document.getElementById('referralTypeFilter').addEventListener('change', renderReferral);
+        d_sel_ref.addEventListener('change', renderReferral);
+        
+        // 初次渲染
+        renderIcope();
+        
+        // 加上一點 CSS 動畫支援
+        const style = document.createElement('style');
+        style.innerHTML = `
+            @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+            .animate-fade-in { animation: fadeIn 0.4s ease-out forwards; }
+            .custom-scrollbar::-webkit-scrollbar { width: 6px; }
+            .custom-scrollbar::-webkit-scrollbar-track { background: #f1f5f9; border-radius: 10px; }
+            .custom-scrollbar::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
+            .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+        `;
+        document.head.appendChild(style);
+    </script>
+</body>
+</html>
