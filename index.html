@@ -319,6 +319,8 @@
             // 建立一個暫時的 textarea 來執行複製
             const el = document.createElement('textarea');
             el.value = txt;
+            el.style.position = 'fixed'; // 防止畫面跳動
+            el.style.opacity = '0'; // 隱藏 textarea
             document.body.appendChild(el);
             el.select();
             document.execCommand('copy');
@@ -411,6 +413,8 @@
                 filtered.forEach(u => {
                     const cleanPhone = u.phone.replace(/[^\d]/g, '');
                     const txt = `【台北市 ICOPE 服務機構】\n單位：${u.name}\n區域：${u.district}\n電話：${u.phone}\n導航：https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(u.name + ' ' + u.code)}`;
+                    // 將字串編碼，避免換行符號破壞 HTML 結構
+                    const encodedTxt = encodeURIComponent(txt).replace(/'/g, "%27");
                     
                     const div = document.createElement('div');
                     div.className = 'unit-card bg-white rounded-3xl p-6 border border-slate-100 card-shadow flex flex-col justify-between transition-all no-print animate-fade-in hover:border-sky-200';
@@ -436,7 +440,7 @@
                                 <button onclick="openNav('${u.name}', '${u.code}')" class="bg-slate-100 hover:bg-slate-200 text-slate-700 py-2.5 rounded-xl text-xs font-bold transition-all">
                                     <i class="fas fa-compass mr-1 text-sky-600"></i> 導航
                                 </button>
-                                <button onclick="copyToClipboard('${txt}', this)" class="bg-slate-100 hover:bg-slate-200 text-slate-700 py-2.5 rounded-xl text-xs font-bold transition-all">
+                                <button onclick="copyToClipboard(decodeURIComponent('${encodedTxt}'), this)" class="bg-slate-100 hover:bg-slate-200 text-slate-700 py-2.5 rounded-xl text-xs font-bold transition-all">
                                     <i class="fas fa-copy mr-1"></i> 複製資訊
                                 </button>
                             </div>
@@ -545,6 +549,7 @@
                     const info = getReferralIconInfo(r.type);
                     const cleanPhone = r.phone.replace(/[^\d]/g, '');
                     const txt = `【ICOPE 後續轉介資源】\n項目：${r.type}\n單位：${r.name}\n電話：${r.phone}\n地址：${r.address}\n導航：https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(r.name + ' ' + r.address)}`;
+                    const encodedTxt = encodeURIComponent(txt).replace(/'/g, "%27");
 
                     const item = document.createElement('div');
                     item.className = 'border border-slate-100 rounded-2xl p-3 hover:bg-slate-50 transition-colors cursor-pointer relative overflow-hidden group';
@@ -571,7 +576,7 @@
                             <div class="flex gap-2 mt-3">
                                 <a href="tel:${cleanPhone}" class="flex-1 text-center py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-bold text-slate-600 hover:bg-slate-100"><i class="fas fa-phone mr-1"></i> 致電</a>
                                 <button onclick="openNav('${r.name}','${r.address}')" class="flex-1 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-bold text-slate-600 hover:bg-slate-100"><i class="fas fa-location-arrow mr-1"></i> 導航</button>
-                                <button onclick="copyToClipboard('${txt}', this)" title="複製資訊" class="w-8 flex items-center justify-center bg-white border border-slate-200 rounded-lg text-xs font-bold text-slate-400 hover:text-slate-700 hover:bg-slate-50"><i class="fas fa-copy"></i></button>
+                                <button onclick="copyToClipboard(decodeURIComponent('${encodedTxt}'), this)" title="複製資訊" class="w-8 flex items-center justify-center bg-white border border-slate-200 rounded-lg text-xs font-bold text-slate-400 hover:text-slate-700 hover:bg-slate-50"><i class="fas fa-copy"></i></button>
                             </div>
                         </div>
                     `;
